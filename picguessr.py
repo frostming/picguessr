@@ -148,7 +148,7 @@ def _load_idioms():
 
 
 def make_image_prompt(word: str) -> str:
-    prompt = f"Revise {word} to a DALL-E prompt"
+    prompt = f"Explain the chinese idiom {word} to plain text"
     response = openai_client.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
         **DEFAULT_CONFIG["chat"],
