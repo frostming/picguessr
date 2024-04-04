@@ -106,22 +106,24 @@ def handle_exception(f):
     return wrapper
 
 
-def check_answer(guess: str, solution: str) -> list[str]:
-    result = [ABSENT] * len(solution)
+def check_answer(guess: str, solution: str) -> str:
+    result = [""] * len(solution)
     counter = Counter(solution)
     for i, l in enumerate(solution):
-        if guess[i] == l:
+        if i >= len(guess):
+            result[i] = ABSENT
+        elif guess[i] == l:
             result[i] = CORRECT
             counter[l] -= 1
     for i, l in enumerate(guess):
-        if result[i] > -1:
+        if result[i]:
             continue
         elif counter.get(l, 0) > 0:
             result[i] = PRESENT
             counter[l] -= 1
         else:
             result[i] = ABSENT
-    return result
+    return "".join(result)
 
 
 @app.message_handler(commands=["guess"], chat_types=["supergroup"])
