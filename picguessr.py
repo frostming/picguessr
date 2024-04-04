@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import sqlite3
 import sys
 import textwrap
 from collections import Counter
@@ -37,28 +38,22 @@ openai_client = AzureOpenAI(  # TODO: suppoprt vanilla OpenAI
 
 class GameManager:
     def __init__(self) -> None:
-        import sqlite3
-        import weakref
-
         self._states = {}
         os.makedirs(DATA_DIR, exist_ok=True)
-        self._conn = sqlite3.connect(os.path.join(DATA_DIR, "game.db"))
-        self._finalizer = weakref.finalize(self, self.close)
+        self._db = os.path.join(DATA_DIR, "game.db")
         self._init_db()
 
-    def close(self):
-        self._conn.close()
-
     def _init_db(self):
-        self._conn.execute(
-            textwrap.dedent("""
-            CREATE TABLE IF NOT EXISTS scores (
-                username TEXT PRIMARY KEY,
-                score INTEGER DEFAULT 0
+        with sqlite3.connect(self._db) as conn:
+            conn.execute(
+                textwrap.dedent("""
+                CREATE TABLE IF NOT EXISTS scores (
+                    username TEXT PRIMARY KEY,
+                    score INTEGER DEFAULT 0
+                )
+                """)
             )
-            """)
-        )
-        self._conn.commit()
+            conn.commit()
 
     def start_game(self, chat_id: int, idiom: str):
         self._states[chat_id] = {
@@ -75,15 +70,17 @@ class GameManager:
         self._states.pop(chat_id, None)
 
     def record_win(self, user: User) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO scores (username, score) VALUES (?, COALESCE((SELECT score FROM scores WHERE username = ?), 0) + 1)",
-            (user.username, user.username),
-        )
-        self._conn.commit()
+        with sqlite3.connect(self._db) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO scores (username, score) VALUES (?, COALESCE((SELECT score FROM scores WHERE username = ?), 0) + 1)",
+                (user.username, user.username),
+            )
+            conn.commit()
 
     def get_scores(self) -> dict[str, int]:
-        cur = self._conn.execute("SELECT username, score FROM scores")
-        return dict(cur.fetchall())
+        with sqlite3.connect(self._db) as conn:
+            cur = conn.execute("SELECT username, score FROM scores")
+            return dict(cur.fetchall())
 
 
 game_manager = GameManager()
