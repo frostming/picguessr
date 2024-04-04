@@ -19,5 +19,8 @@ FROM python:$PYTHON_BASE
 # retrieve packages from build stage
 COPY --from=builder /project/.venv/ /project/.venv
 ENV PATH="/project/.venv/bin:$PATH"
+WORKDIR /project
 COPY picguessr.py picguessr.py
+
+VOLUME [ "/project/data" ]
 CMD ["python", "picguessr.py"]

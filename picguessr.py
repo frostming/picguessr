@@ -2,10 +2,12 @@ import logging
 import os
 import random
 import sys
+import textwrap
+from collections import Counter
 
 from openai import AzureOpenAI
 from telebot import TeleBot
-from telebot.types import BotCommand, Message
+from telebot.types import BotCommand, Message, User
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,11 @@ DEFAULT_CONFIG = {  # TODO: allow to change
 IDIOM_DATABASE_URL = (
     "https://cdn.jsdelivr.net/gh/cheeaun/chengyu-wordle/data/THUOCL_chengyu.txt"
 )
-
+ABSENT = "⬛"
+PRESENT = "🟨"
+CORRECT = "🟩"
+DATA_DIR = os.getenv("DATA_DIR", "data")
+IDIOM_FILE = os.path.join(DATA_DIR, "idioms.txt")
 
 openai_client = AzureOpenAI(  # TODO: suppoprt vanilla OpenAI
     api_version="2024-02-01",
@@ -31,7 +37,28 @@ openai_client = AzureOpenAI(  # TODO: suppoprt vanilla OpenAI
 
 class GameManager:
     def __init__(self) -> None:
+        import sqlite3
+        import weakref
+
         self._states = {}
+        os.makedirs(DATA_DIR, exist_ok=True)
+        self._conn = sqlite3.connect(os.path.join(DATA_DIR, "game.db"))
+        self._finalizer = weakref.finalize(self, self.close)
+        self._init_db()
+
+    def close(self):
+        self._conn.close()
+
+    def _init_db(self):
+        self._conn.execute(
+            textwrap.dedent("""
+            CREATE TABLE IF NOT EXISTS scores (
+                username TEXT PRIMARY KEY,
+                score INTEGER DEFAULT 0
+            )
+            """)
+        )
+        self._conn.commit()
 
     def start_game(self, chat_id: int, idiom: str):
         self._states[chat_id] = {
@@ -46,6 +73,17 @@ class GameManager:
 
     def clear_state(self, chat_id: int):
         self._states.pop(chat_id, None)
+
+    def record_win(self, user: User) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO scores (username, score) VALUES (?, COALESCE((SELECT score FROM scores WHERE username = ?), 0) + 1)",
+            (user.username, user.username),
+        )
+        self._conn.commit()
+
+    def get_scores(self) -> dict[str, int]:
+        cur = self._conn.execute("SELECT username, score FROM scores")
+        return dict(cur.fetchall())
 
 
 game_manager = GameManager()
@@ -68,6 +106,24 @@ def handle_exception(f):
     return wrapper
 
 
+def check_answer(guess: str, solution: str) -> list[str]:
+    result = [ABSENT] * len(solution)
+    counter = Counter(solution)
+    for i, l in enumerate(solution):
+        if guess[i] == l:
+            result[i] = CORRECT
+            counter[l] -= 1
+    for i, l in enumerate(guess):
+        if result[i] > -1:
+            continue
+        elif counter.get(l, 0) > 0:
+            result[i] = PRESENT
+            counter[l] -= 1
+        else:
+            result[i] = ABSENT
+    return result
+
+
 @app.message_handler(commands=["guess"], chat_types=["supergroup"])
 @handle_exception
 def start_game(message: Message):
@@ -78,14 +134,31 @@ def start_game(message: Message):
         return
     prepare = app.reply_to(message, "正在准备游戏，请稍等...")
     idiom = random.choice(IDIOMS)
-    image_url = generate_image(idiom)
     game_state = game_manager.start_game(message.chat.id, idiom)
-    app.send_photo(
-        message.chat.id,
-        image_url,
-        caption=f"猜猜这是什么成语？你有 {game_state['remain_guesses']} 次机会。",
-    )
-    app.delete_message(prepare.chat.id, prepare.message_id)
+    try:
+        image_url = generate_image(idiom)
+        app.send_photo(
+            message.chat.id,
+            image_url,
+            caption=f"猜猜这是什么成语？你有 {game_state['remain_guesses']} 次机会。",
+        )
+    except Exception:
+        game_manager.clear_state(message.chat.id)
+        raise
+    else:
+        app.delete_message(prepare.chat.id, prepare.message_id)
+
+
+@app.message_handler(commands=["score"], chat_types=["supergroup"])
+@handle_exception
+def show_score(message: Message):
+    board = game_manager.get_scores()
+    if not board:
+        app.reply_to(message, "暂无记录")
+        return
+
+    scores = "\n".join(f"{username}: {score}" for username, score in board.items())
+    app.reply_to(message, f"当前排行榜：\n{scores}")
 
 
 @app.message_handler(
@@ -100,10 +173,7 @@ def check_guess(message: Message):
         app.reply_to(message, "没有游戏正在进行中, 请使用 /guess 开始游戏")
         return
 
-    if message.text == game_state["idiom"]:
-        app.reply_to(message, "太棒了，你是怎么知道的？")
-        game_manager.clear_state(message.chat.id)
-    elif message.text == "提示":
+    if message.text == "提示":
         to_reveal = [
             i
             for i in range(len(game_state["idiom"]))
@@ -117,33 +187,42 @@ def check_guess(message: Message):
             app.reply_to(
                 message, f"第 {reveal + 1} 个字是 {game_state['idiom'][reveal]}"
             )
+        return
+
+    check = check_answer(message.text, game_state["idiom"])
+
+    if message.text == game_state["idiom"]:
+        app.reply_to(message, f"{check}\n太棒了，你是怎么知道的？")
+        game_manager.record_win(message.from_user)
+        game_manager.clear_state(message.chat.id)
     else:
         game_state["remain_guesses"] -= 1
         if game_state["remain_guesses"]:
             app.reply_to(
-                message, f"猜错啦！还剩 {game_state['remain_guesses']} 次机会。"
+                message,
+                f"{check}\n猜错啦！还剩 {game_state['remain_guesses']} 次机会。",
             )
         else:
             app.reply_to(
                 message,
-                f"没猜到吧，答案是 {game_state['idiom']}。",
+                f"{check}\n没猜到吧，答案是 {game_state['idiom']}。",
             )
             game_manager.clear_state(message.chat.id)
 
 
 def _load_idioms():
-    if not os.path.exists("idioms.txt"):
+    if not os.path.exists(IDIOM_FILE):
         import httpx
 
         logger.info("Downloading idioms database from THUOCL...")
         with httpx.Client() as client:
             with client.stream("GET", IDIOM_DATABASE_URL) as response:
                 response.raise_for_status()
-                with open("idioms.txt", "wb") as f:
+                with open(IDIOM_FILE, "wb") as f:
                     for chunk in response.iter_bytes(8192):
                         f.write(chunk)
 
-    with open("idioms.txt") as f:
+    with open(IDIOM_FILE) as f:
         IDIOMS[:] = [line.split()[0] for line in f if line.strip()]
 
 
@@ -176,7 +255,9 @@ def setup_logger(is_debug: bool):
 def main():
     setup_logger("-d" in sys.argv)
     _load_idioms()
-    app.set_my_commands([BotCommand("guess", "开始猜词游戏")])
+    app.set_my_commands(
+        [BotCommand("guess", "开始猜词游戏"), BotCommand("score", "查看排行榜")]
+    )
     logger.info("Bot started.")
     app.infinity_polling()
 
