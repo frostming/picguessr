@@ -156,7 +156,10 @@ def show_score(message: Message):
         app.reply_to(message, "暂无记录")
         return
 
-    scores = "\n".join(f"{username}: {score}" for username, score in board.items())
+    scores = "\n".join(
+        f"{username}: {score}"
+        for username, score in sorted(board.items(), key=lambda x: x[1], reverse=True)
+    )
     app.reply_to(message, f"当前排行榜：\n{scores}")
 
 
