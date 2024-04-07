@@ -140,6 +140,9 @@ class GuessGame(abc.ABC):
         self.openai_client = openai_client
         self.config = copy.deepcopy(DEFAULT_CONFIG)
 
+    def render_answer(self, state: GameState) -> str:
+        return state["answer"]
+
     @abc.abstractmethod
     def add_to_bot(self, bot: TeleBot) -> None:
         pass
@@ -234,6 +237,9 @@ class GuessIdiom(GuessGame):
             raise RuntimeError("Failed to generate image")
         return result.data[0].url
 
+    def render_answer(self, state: GameState) -> str:
+        return f'{state["answer"]}\n出自[{state["context"]['origin']}]({state["context"]["url"]})'
+
     def add_to_bot(self, bot: TeleBot) -> None:
         bot.register_message_handler(
             self.start_game,
@@ -285,10 +291,6 @@ class GuessPoem(GuessGame):
                     check[i] = c
                 else:
                     check.append(c)
-        if guess == golden or state["remain_guesses"] == 1:
-            check.append(
-                f"\n出自[{state['context']['origin']}]({state['context']['url']})"
-            )
         return guess == golden, "".join(check)
 
     @handle_exception
@@ -394,11 +396,19 @@ def check_guess(message: Message):
             bot.reply_to(message, "".join(c or ABSENT for c in game_state["revealed"]))
         return
 
+    answer = game_state["game"].render_answer(game_state)
+    if message.text == "答案":
+        bot.reply_to(message, f"答案是 {answer}", parse_mode="MarkdownV2")
+        game_manager.clear_state(message.chat.id)
+        return
+
     success, check = game_state["game"].check_answer(message.text, game_state)
 
     if success:
         bot.reply_to(
-            message, f"{check}\n太棒了，你是怎么知道的？", parse_mode="MarkdownV2"
+            message,
+            f"{check}\n太棒了，你是怎么知道的？{answer}",
+            parse_mode="MarkdownV2",
         )
         game_manager.record_win(message.from_user)
         game_manager.clear_state(message.chat.id)
@@ -413,7 +423,7 @@ def check_guess(message: Message):
         else:
             bot.reply_to(
                 message,
-                f"{check}\n没猜到吧，答案是 {game_state['answer']}。",
+                f"{check}\n没猜到吧，答案是 {answer}。",
                 parse_mode="MarkdownV2",
             )
             game_manager.clear_state(message.chat.id)
