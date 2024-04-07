@@ -65,6 +65,7 @@ class GameManager:
             conn.commit()
 
     def start_game(self, chat_id: int, state: GameState) -> GameState:
+        logger.info("Starting a new game in chat %d", chat_id)
         self._states[chat_id] = state
         return state
 
