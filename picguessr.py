@@ -1,3 +1,5 @@
+import abc
+import copy
 import logging
 import os
 import random
@@ -5,8 +7,9 @@ import sqlite3
 import sys
 import textwrap
 from collections import Counter
+from typing import TypedDict
 
-from openai import AzureOpenAI
+from openai import AzureOpenAI, OpenAI
 from telebot import TeleBot
 from telebot.types import BotCommand, Message, User
 
@@ -20,28 +23,30 @@ DEFAULT_CONFIG = {  # TODO: allow to change
     },
     "model": "dall-e",
 }
-IDIOM_DATABASE_URL = (
-    "https://cdn.jsdelivr.net/gh/cheeaun/chengyu-wordle/data/THUOCL_chengyu.txt"
-)
+
 ABSENT = "⬛"
 PRESENT = "🟨"
 CORRECT = "🟩"
 DATA_DIR = os.getenv("DATA_DIR", "data")
-IDIOM_FILE = os.path.join(DATA_DIR, "idioms.txt")
 
-openai_client = AzureOpenAI(  # TODO: suppoprt vanilla OpenAI
-    api_version="2024-02-01",
-    azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-    api_key=os.environ["AZURE_OPENAI_API_KEY"],
-)
+
+class GameState(TypedDict):
+    answer: str
+    remain_guesses: int
+    revealed: list[str]
+    min_unrevealed: int
 
 
 class GameManager:
     def __init__(self) -> None:
-        self._states = {}
+        self.is_debug = False
+        self._states: dict[str, GameState] = {}
         os.makedirs(DATA_DIR, exist_ok=True)
         self._db = os.path.join(DATA_DIR, "game.db")
         self._init_db()
+
+    def set_debug(self, is_debug: bool) -> None:
+        self.is_debug = is_debug
 
     def _init_db(self):
         with sqlite3.connect(self._db) as conn:
@@ -55,18 +60,14 @@ class GameManager:
             )
             conn.commit()
 
-    def start_game(self, chat_id: int, idiom: str):
-        self._states[chat_id] = {
-            "idiom": idiom,
-            "remain_guesses": DEFAULT_CONFIG["max_guesses"],
-            "revealed": [],
-        }
-        return self._states[chat_id]
+    def start_game(self, chat_id: int, state: GameState) -> GameState:
+        self._states[chat_id] = state
+        return state
 
-    def get_state(self, chat_id: int):
+    def get_state(self, chat_id: int) -> GameState | None:
         return self._states.get(chat_id)
 
-    def clear_state(self, chat_id: int):
+    def clear_state(self, chat_id: int) -> None:
         self._states.pop(chat_id, None)
 
     def record_win(self, user: User) -> None:
@@ -82,169 +83,205 @@ class GameManager:
             cur = conn.execute("SELECT username, score FROM scores")
             return dict(cur.fetchall())
 
+    @staticmethod
+    def check_answer(guess: str, answer: str) -> str:
+        result = [""] * len(answer)
+        counter = Counter(answer)
+        for i, l in enumerate(answer):
+            if i >= len(guess):
+                result[i] = ABSENT
+            elif guess[i] == l:
+                result[i] = CORRECT
+                counter[l] -= 1
+        for i, l in enumerate(guess):
+            if result[i]:
+                continue
+            elif counter.get(l, 0) > 0:
+                result[i] = PRESENT
+                counter[l] -= 1
+            else:
+                result[i] = ABSENT
+        return "".join(result)
+
 
 game_manager = GameManager()
-IDIOMS: list[dict] = []
-app = TeleBot(token=os.environ["BOT_TOKEN"])
-me = app.get_me()
+bot = TeleBot(token=os.environ["BOT_TOKEN"])
+me = bot.get_me()
 
 
 def handle_exception(f):
-    def wrapper(message, **kwargs):
+    import inspect
+
+    def wrapper(*args, **kwargs):
+        parameters = inspect.signature(f).parameters
+        if "self" in parameters:
+            message = args[1]
+        else:
+            message = args[0]
         try:
             logger.debug(
                 "New message from %s chat: %s", message.chat.type, message.chat.id
             )
-            return f(message, **kwargs)
+            return f(*args, **kwargs)
         except Exception as e:
             logger.exception(e)
-            app.reply_to(message, "出现了一些问题，请查看服务端日志。")
+            bot.reply_to(message, "出现了一些问题，请查看服务端日志。")
 
     return wrapper
 
 
-def check_answer(guess: str, solution: str) -> str:
-    result = [""] * len(solution)
-    counter = Counter(solution)
-    for i, l in enumerate(solution):
-        if i >= len(guess):
-            result[i] = ABSENT
-        elif guess[i] == l:
-            result[i] = CORRECT
-            counter[l] -= 1
-    for i, l in enumerate(guess):
-        if result[i]:
-            continue
-        elif counter.get(l, 0) > 0:
-            result[i] = PRESENT
-            counter[l] -= 1
-        else:
-            result[i] = ABSENT
-    return "".join(result)
+class GuessGame(abc.ABC):
+    def __init__(self, openai_client: OpenAI) -> None:
+        self.openai_client = openai_client
+        self.config = copy.deepcopy(DEFAULT_CONFIG)
+
+    @abc.abstractmethod
+    def add_to_bot(self, bot: TeleBot) -> None:
+        pass
+
+    @abc.abstractmethod
+    def get_my_commands(self) -> list[BotCommand]:
+        pass
 
 
-@app.message_handler(commands=["guess"], chat_types=["supergroup"])
-@handle_exception
-def start_game(message: Message):
-    game_state = game_manager.get_state(message.chat.id)
-    if game_state:
-        # TODO: per chat state
-        app.reply_to(message, "已经有一个游戏正在进行中")
-        return
-    prepare = app.reply_to(message, "正在准备游戏，请稍等...")
-    idiom = random.choice(IDIOMS)
-    game_state = game_manager.start_game(message.chat.id, idiom)
-    try:
-        image_url = generate_image(idiom)
-        app.send_photo(
+class GuessIdiom(GuessGame):
+    IDIOM_DATABASE_URL = (
+        "https://cdn.jsdelivr.net/gh/cheeaun/chengyu-wordle/data/THUOCL_chengyu.txt"
+    )
+    IDIOM_FILE = os.path.join(DATA_DIR, "idioms.txt")
+
+    def __init__(self, openai_client: OpenAI) -> None:
+        super().__init__(openai_client)
+        self.idioms = self._load_idioms()
+        self.config["min_unrevealed"] = 1
+
+    @handle_exception
+    def start_game(self, message: Message) -> None:
+        game_state = game_manager.get_state(message.chat.id)
+        if game_state:
+            # TODO: per chat state
+            bot.reply_to(message, "已经有一个游戏正在进行中")
+            return
+        prepare = bot.reply_to(message, "正在准备游戏，请稍等...")
+        idiom = random.choice(self.idioms)
+        game_state = game_manager.start_game(
             message.chat.id,
-            image_url,
-            caption=f"猜猜这是什么成语？你有 {game_state['remain_guesses']} 次机会。",
+            {
+                "answer": idiom,
+                "remain_guesses": self.config["max_guesses"],
+                "revealed": [""] * len(idiom),
+                "min_unrevealed": self.config["min_unrevealed"],
+            },
         )
-    except Exception:
-        game_manager.clear_state(message.chat.id)
-        raise
-    else:
-        app.delete_message(prepare.chat.id, prepare.message_id)
+        try:
+            image_url = self.generate_image(idiom)
+            bot.send_photo(
+                message.chat.id,
+                image_url,
+                caption=f"猜猜这是什么成语？你有 {game_state['remain_guesses']} 次机会。",
+            )
+        except Exception:
+            game_manager.clear_state(message.chat.id)
+            raise
+        else:
+            bot.delete_message(prepare.chat.id, prepare.message_id)
+
+    def _load_idioms(self) -> list[str]:
+        if not os.path.exists(self.IDIOM_FILE):
+            import httpx
+
+            logger.info("Downloading idioms database from THUOCL...")
+            with httpx.Client() as client:
+                with client.stream("GET", self.IDIOM_DATABASE_URL) as response:
+                    response.raise_for_status()
+                    with open(self.IDIOM_FILE, "wb") as f:
+                        for chunk in response.iter_bytes(8192):
+                            f.write(chunk)
+
+        with open(self.IDIOM_FILE) as f:
+            return [line.split()[0] for line in f if line.strip()]
+
+    def make_image_prompt(self, word: str) -> str:
+        prompt = f"Explain the chinese idiom {word} to plain text"
+        response = self.openai_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            **self.config["chat"],
+        )
+        logger.debug(
+            "Image prompt for %s: %s", word, response.choices[0].message.content
+        )
+        return response.choices[0].message.content
+
+    def generate_image(self, word: str) -> str:
+        result = self.openai_client.images.generate(
+            prompt=self.make_image_prompt(word), model=self.config["model"], n=1
+        )
+        if not result.data or not result.data[0].url:
+            raise RuntimeError("Failed to generate image")
+        return result.data[0].url
+
+    def add_to_bot(self, bot: TeleBot) -> None:
+        bot.register_message_handler(
+            self.start_game,
+            commands=["guess"],
+            chat_types=["supergroup"] if not game_manager.is_debug else None,
+        )
+
+    def get_my_commands(self) -> list[BotCommand]:
+        return [BotCommand("guess", "开始猜成语")]
 
 
-@app.message_handler(commands=["score"], chat_types=["supergroup"])
 @handle_exception
 def show_score(message: Message):
     board = game_manager.get_scores()
     if not board:
-        app.reply_to(message, "暂无记录")
+        bot.reply_to(message, "暂无记录")
         return
 
     scores = "\n".join(
         f"{username}: {score}"
         for username, score in sorted(board.items(), key=lambda x: x[1], reverse=True)
     )
-    app.reply_to(message, f"当前排行榜：\n{scores}")
+    bot.reply_to(message, f"当前排行榜：\n{scores}")
 
 
-@app.message_handler(
-    func=lambda message: message.reply_to_message is not None
-    and message.reply_to_message.from_user.id == me.id,
-    chat_types=["supergroup"],
-)
 @handle_exception
 def check_guess(message: Message):
     game_state = game_manager.get_state(message.chat.id)
     if not game_state:
-        app.reply_to(message, "没有游戏正在进行中, 请使用 /guess 开始游戏")
+        bot.reply_to(message, "没有游戏正在进行中, 请使用 /guess 开始游戏")
         return
 
     if message.text == "提示":
-        to_reveal = [
-            i
-            for i in range(len(game_state["idiom"]))
-            if i not in game_state["revealed"]
-        ]
-        if len(to_reveal) <= 1:
-            app.reply_to(message, "已经没有更多提示了")
+        to_reveal = [i for i, c in enumerate(game_state["revealed"]) if not c]
+        if len(to_reveal) <= game_state["min_unrevealed"]:
+            bot.reply_to(message, "已经没有更多提示了")
         else:
-            reveal = random.choice(to_reveal)
-            game_state["revealed"].append(reveal)
-            app.reply_to(
-                message, f"第 {reveal + 1} 个字是 {game_state['idiom'][reveal]}"
-            )
+            pos = random.choice(to_reveal)
+            revealed = game_state["answer"][pos]
+            game_state["revealed"][pos] = revealed
+            bot.reply_to(message, "".join(c or ABSENT for c in game_state["revealed"]))
         return
 
-    check = check_answer(message.text, game_state["idiom"])
+    check = game_manager.check_answer(message.text, game_state["answer"])
 
-    if message.text == game_state["idiom"]:
-        app.reply_to(message, f"{check}\n太棒了，你是怎么知道的？")
+    if message.text == game_state["answer"]:
+        bot.reply_to(message, f"{check}\n太棒了，你是怎么知道的？")
         game_manager.record_win(message.from_user)
         game_manager.clear_state(message.chat.id)
     else:
         game_state["remain_guesses"] -= 1
         if game_state["remain_guesses"]:
-            app.reply_to(
+            bot.reply_to(
                 message,
                 f"{check}\n猜错啦！还剩 {game_state['remain_guesses']} 次机会。",
             )
         else:
-            app.reply_to(
+            bot.reply_to(
                 message,
-                f"{check}\n没猜到吧，答案是 {game_state['idiom']}。",
+                f"{check}\n没猜到吧，答案是 {game_state['answer']}。",
             )
             game_manager.clear_state(message.chat.id)
-
-
-def _load_idioms():
-    if not os.path.exists(IDIOM_FILE):
-        import httpx
-
-        logger.info("Downloading idioms database from THUOCL...")
-        with httpx.Client() as client:
-            with client.stream("GET", IDIOM_DATABASE_URL) as response:
-                response.raise_for_status()
-                with open(IDIOM_FILE, "wb") as f:
-                    for chunk in response.iter_bytes(8192):
-                        f.write(chunk)
-
-    with open(IDIOM_FILE) as f:
-        IDIOMS[:] = [line.split()[0] for line in f if line.strip()]
-
-
-def make_image_prompt(word: str) -> str:
-    prompt = f"Explain the chinese idiom {word} to plain text"
-    response = openai_client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
-        **DEFAULT_CONFIG["chat"],
-    )
-    logger.debug("Image prompt for %s: %s", word, response.choices[0].message.content)
-    return response.choices[0].message.content
-
-
-def generate_image(word: str) -> str:
-    result = openai_client.images.generate(
-        prompt=make_image_prompt(word), model=DEFAULT_CONFIG["model"], n=1
-    )
-    if not result.data or not result.data[0].url:
-        raise RuntimeError("Failed to generate image")
-    return result.data[0].url
 
 
 def setup_logger(is_debug: bool):
@@ -255,13 +292,34 @@ def setup_logger(is_debug: bool):
 
 
 def main():
-    setup_logger("-d" in sys.argv)
-    _load_idioms()
-    app.set_my_commands(
-        [BotCommand("guess", "开始猜词游戏"), BotCommand("score", "查看排行榜")]
+    is_debug = "-d" in sys.argv
+    setup_logger(is_debug)
+    game_manager.set_debug(is_debug)
+
+    bot.register_message_handler(
+        show_score,
+        commands=["score"],
+        chat_types=["supergroup"] if not is_debug else None,
     )
+    bot.register_message_handler(
+        check_guess,
+        func=lambda message: message.reply_to_message is not None
+        and message.reply_to_message.from_user.id == me.id,
+        chat_types=["supergroup"] if not is_debug else None,
+    )
+    openai_client = AzureOpenAI(  # TODO: suppoprt vanilla OpenAI
+        api_version="2024-02-01",
+        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+        api_key=os.environ["AZURE_OPENAI_API_KEY"],
+    )
+    my_commands: list[BotCommand] = [BotCommand("score", "查看排行榜")]
+    for game in [GuessIdiom(openai_client)]:
+        game.add_to_bot(bot)
+        my_commands.extend(game.get_my_commands())
+    bot.set_my_commands(my_commands)
+
     logger.info("Bot started.")
-    app.infinity_polling()
+    bot.infinity_polling()
 
 
 if __name__ == "__main__":
