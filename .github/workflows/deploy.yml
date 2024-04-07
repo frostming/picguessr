@@ -1,0 +1,20 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - '*'
+
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rollout the deployment
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: ${{ secrets.DEPLOY_SCRIPT }}
