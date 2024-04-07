@@ -252,10 +252,11 @@ class GuessPoem(GuessGame):
 
     def __init__(self, openai_client: OpenAI) -> None:
         super().__init__(openai_client)
-        self.poems = self._load_poems()
+        self.poems, self.sep = self._load_poems()
+        self.total = len(self.poems)
         self.config["min_unrevealed"] = 5
 
-    def _load_poems(self) -> list[dict]:
+    def _load_poems(self) -> tuple[list[dict], int]:
         if not os.path.exists(self.POEM_FILE):
             import httpx
 
@@ -268,7 +269,8 @@ class GuessPoem(GuessGame):
                             f.write(chunk)
 
         with open(self.POEM_FILE) as f:
-            return json.load(f)
+            data = json.load(f)
+            return data["data"], data["sep"]
 
     def normalize(self, text: str) -> str:
         return re.sub(rf"[{self.PUNCTUATION}\s]\s*", " ", text).strip()
@@ -296,7 +298,13 @@ class GuessPoem(GuessGame):
             bot.reply_to(message, "已经有一个游戏正在进行中")
             return
         prepare = bot.reply_to(message, "正在准备游戏，请稍等...")
-        poem = random.choice(self.poems)
+        if "hard" in message.text.lower():
+            rang = (self.sep, self.total)
+        else:
+            rang = (0, self.sep)
+        idx = random.randrange(*rang)
+        logger.debug("Selecting poem %d", idx)
+        poem = self.poems[idx]
         line = poem["sentence"]
         game_state = game_manager.start_game(
             message.chat.id,
