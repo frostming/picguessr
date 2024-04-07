@@ -237,9 +237,6 @@ class GuessIdiom(GuessGame):
             raise RuntimeError("Failed to generate image")
         return result.data[0].url
 
-    def render_answer(self, state: GameState) -> str:
-        return f'{state["answer"]}\n出自[{state["context"]["origin"]}]({state["context"]["url"]})'
-
     def add_to_bot(self, bot: TeleBot) -> None:
         bot.register_message_handler(
             self.start_game,
@@ -261,6 +258,9 @@ class GuessPoem(GuessGame):
         self.poems, self.sep = self._load_poems()
         self.total = len(self.poems)
         self.config["min_unrevealed"] = 5
+
+    def render_answer(self, state: GameState) -> str:
+        return f'{state["answer"]}\n出自[{state["context"]["origin"]}]({state["context"]["url"]})'
 
     def _load_poems(self) -> tuple[list[dict], int]:
         if not os.path.exists(self.POEM_FILE):
