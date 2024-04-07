@@ -238,7 +238,7 @@ class GuessIdiom(GuessGame):
         return result.data[0].url
 
     def render_answer(self, state: GameState) -> str:
-        return f'{state["answer"]}\n出自[{state["context"]['origin']}]({state["context"]["url"]})'
+        return f'{state["answer"]}\n出自[{state["context"]["origin"]}]({state["context"]["url"]})'
 
     def add_to_bot(self, bot: TeleBot) -> None:
         bot.register_message_handler(
