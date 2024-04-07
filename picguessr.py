@@ -99,7 +99,7 @@ def evaluate_guess(guess: str, answer: str) -> str:
             result[i] = CORRECT
             counter[l] -= 1
     for i, l in enumerate(guess):
-        if result[i]:
+        if i >= len(result) or result[i]:
             continue
         elif counter.get(l, 0) > 0:
             result[i] = PRESENT
