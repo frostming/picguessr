@@ -1,13 +1,15 @@
 import abc
 import copy
+import json
 import logging
 import os
 import random
+import re
 import sqlite3
 import sys
 import textwrap
 from collections import Counter
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from openai import AzureOpenAI, OpenAI
 from telebot import TeleBot
@@ -35,6 +37,8 @@ class GameState(TypedDict):
     remain_guesses: int
     revealed: list[str]
     min_unrevealed: int
+    game: "GuessGame"
+    context: dict[str, Any]
 
 
 class GameManager:
@@ -83,25 +87,25 @@ class GameManager:
             cur = conn.execute("SELECT username, score FROM scores")
             return dict(cur.fetchall())
 
-    @staticmethod
-    def check_answer(guess: str, answer: str) -> str:
-        result = [""] * len(answer)
-        counter = Counter(answer)
-        for i, l in enumerate(answer):
-            if i >= len(guess):
-                result[i] = ABSENT
-            elif guess[i] == l:
-                result[i] = CORRECT
-                counter[l] -= 1
-        for i, l in enumerate(guess):
-            if result[i]:
-                continue
-            elif counter.get(l, 0) > 0:
-                result[i] = PRESENT
-                counter[l] -= 1
-            else:
-                result[i] = ABSENT
-        return "".join(result)
+
+def evaluate_guess(guess: str, answer: str) -> str:
+    result = [""] * len(answer)
+    counter = Counter(answer)
+    for i, l in enumerate(answer):
+        if i >= len(guess):
+            result[i] = ABSENT
+        elif guess[i] == l:
+            result[i] = CORRECT
+            counter[l] -= 1
+    for i, l in enumerate(guess):
+        if result[i]:
+            continue
+        elif counter.get(l, 0) > 0:
+            result[i] = PRESENT
+            counter[l] -= 1
+        else:
+            result[i] = ABSENT
+    return "".join(result)
 
 
 game_manager = GameManager()
@@ -143,6 +147,10 @@ class GuessGame(abc.ABC):
     def get_my_commands(self) -> list[BotCommand]:
         pass
 
+    @abc.abstractmethod
+    def check_answer(self, guess: str, state: GameState) -> tuple[bool, str]:
+        pass
+
 
 class GuessIdiom(GuessGame):
     IDIOM_DATABASE_URL = (
@@ -154,6 +162,9 @@ class GuessIdiom(GuessGame):
         super().__init__(openai_client)
         self.idioms = self._load_idioms()
         self.config["min_unrevealed"] = 1
+
+    def check_answer(self, guess: str, state: GameState) -> tuple[bool, str]:
+        return guess == state["answer"], evaluate_guess(guess, state["answer"])
 
     @handle_exception
     def start_game(self, message: Message) -> None:
@@ -171,6 +182,8 @@ class GuessIdiom(GuessGame):
                 "remain_guesses": self.config["max_guesses"],
                 "revealed": [""] * len(idiom),
                 "min_unrevealed": self.config["min_unrevealed"],
+                "game": self,
+                "context": {},
             },
         )
         try:
@@ -231,6 +244,114 @@ class GuessIdiom(GuessGame):
         return [BotCommand("guess", "开始猜成语")]
 
 
+class GuessPoem(GuessGame):
+    POEM_URL = "https://gist.githubusercontent.com/frostming/9f45ee9ba65050ae844bb15c917b878b/raw/tangshi300.json"
+    POEM_FILE = os.path.join(DATA_DIR, "tangshi.json")
+    PUNCTUATION = "，。！？,.!?"
+
+    def __init__(self, openai_client: OpenAI) -> None:
+        super().__init__(openai_client)
+        self.poems = self._load_poems()
+        self.config["min_unrevealed"] = 5
+
+    def _load_poems(self) -> list[dict]:
+        if not os.path.exists(self.POEM_FILE):
+            import httpx
+
+            logger.info("Downloading poems database from Gist...")
+            with httpx.Client() as client:
+                with client.stream("GET", self.POEM_URL) as response:
+                    response.raise_for_status()
+                    with open(self.POEM_FILE, "wb") as f:
+                        for chunk in response.iter_bytes(8192):
+                            f.write(chunk)
+
+        with open(self.POEM_FILE) as f:
+            return json.load(f)
+
+    def normalize(self, text: str) -> str:
+        return re.sub(rf"[{self.PUNCTUATION}\s]\s*", " ", text).strip()
+
+    def check_answer(self, guess: str, state: GameState) -> tuple[bool, str]:
+        guess = self.normalize(guess)
+        golden = self.normalize(state["answer"])
+        check = list(evaluate_guess(guess, golden))
+        for i, c in enumerate(state["answer"]):
+            if c in self.PUNCTUATION:
+                if i < len(check):
+                    check[i] = c
+                else:
+                    check.append(c)
+        if guess == golden or state["remain_guesses"] == 1:
+            check.append(
+                f"\n出自{state['context']['author']}《{state['context']['title']}》"
+            )
+        return guess == golden, "".join(check)
+
+    def start_game(self, message: Message) -> None:
+        game_state = game_manager.get_state(message.chat.id)
+        if game_state:
+            bot.reply_to(message, "已经有一个游戏正在进行中")
+            return
+        prepare = bot.reply_to(message, "正在准备游戏，请稍等...")
+        poem = random.choice(self.poems)
+        line = random.choice(poem["lines"])
+        game_state = game_manager.start_game(
+            message.chat.id,
+            {
+                "answer": line,
+                "remain_guesses": self.config["max_guesses"],
+                "revealed": ["" if c not in self.PUNCTUATION else c for c in line],
+                "min_unrevealed": self.config["min_unrevealed"],
+                "game": self,
+                "context": poem,
+            },
+        )
+        try:
+            image_url = self.generate_image(line)
+            bot.send_photo(
+                message.chat.id,
+                image_url,
+                caption=f"猜猜这是哪句古诗？你有 {game_state['remain_guesses']} 次机会。",
+            )
+        except Exception:
+            game_manager.clear_state(message.chat.id)
+            raise
+        else:
+            bot.delete_message(prepare.chat.id, prepare.message_id)
+
+    def make_image_prompt(self, word: str) -> str:
+        prompt = f"Describe this sentence from chinese poem in plain text, it should be fit as a Dall-E image generate prompt: {word}"
+        response = self.openai_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            **self.config["chat"],
+        )
+        logger.debug(
+            "Image prompt for %s: %s", word, response.choices[0].message.content
+        )
+        return response.choices[0].message.content
+
+    def generate_image(self, word: str) -> str:
+        result = self.openai_client.images.generate(
+            prompt=self.make_image_prompt(word) + " in Chinese comic style",
+            model=self.config["model"],
+            n=1,
+        )
+        if not result.data or not result.data[0].url:
+            raise RuntimeError("Failed to generate image")
+        return result.data[0].url
+
+    def add_to_bot(self, bot: TeleBot) -> None:
+        bot.register_message_handler(
+            self.start_game,
+            commands=["guess_p"],
+            chat_types=["supergroup"] if not game_manager.is_debug else None,
+        )
+
+    def get_my_commands(self) -> list[BotCommand]:
+        return [BotCommand("guess_p", "开始猜古诗")]
+
+
 @handle_exception
 def show_score(message: Message):
     board = game_manager.get_scores()
@@ -249,7 +370,7 @@ def show_score(message: Message):
 def check_guess(message: Message):
     game_state = game_manager.get_state(message.chat.id)
     if not game_state:
-        bot.reply_to(message, "没有游戏正在进行中, 请使用 /guess 开始游戏")
+        bot.reply_to(message, "没有游戏正在进行中, 请使用 /guess 或 /guess_p 开始游戏")
         return
 
     if message.text == "提示":
@@ -263,9 +384,9 @@ def check_guess(message: Message):
             bot.reply_to(message, "".join(c or ABSENT for c in game_state["revealed"]))
         return
 
-    check = game_manager.check_answer(message.text, game_state["answer"])
+    success, check = game_state["game"].check_answer(message.text, game_state)
 
-    if message.text == game_state["answer"]:
+    if success:
         bot.reply_to(message, f"{check}\n太棒了，你是怎么知道的？")
         game_manager.record_win(message.from_user)
         game_manager.clear_state(message.chat.id)
@@ -313,7 +434,7 @@ def main():
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
     )
     my_commands: list[BotCommand] = [BotCommand("score", "查看排行榜")]
-    for game in [GuessIdiom(openai_client)]:
+    for game in [GuessIdiom(openai_client), GuessPoem(openai_client)]:
         game.add_to_bot(bot)
         my_commands.extend(game.get_my_commands())
     bot.set_my_commands(my_commands)
