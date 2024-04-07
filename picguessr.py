@@ -245,8 +245,8 @@ class GuessIdiom(GuessGame):
 
 
 class GuessPoem(GuessGame):
-    POEM_URL = "https://gist.githubusercontent.com/frostming/9f45ee9ba65050ae844bb15c917b878b/raw/tangshi300.json"
-    POEM_FILE = os.path.join(DATA_DIR, "tangshi.json")
+    POEM_URL = "https://gist.githubusercontent.com/frostming/a7e46994c40a348808a9b3fc28297e2e/raw/gushiwen.json"
+    POEM_FILE = os.path.join(DATA_DIR, "gushiwen.json")
     PUNCTUATION = "，。！？,.!?"
 
     def __init__(self, openai_client: OpenAI) -> None:
@@ -284,10 +284,11 @@ class GuessPoem(GuessGame):
                     check.append(c)
         if guess == golden or state["remain_guesses"] == 1:
             check.append(
-                f"\n出自{state['context']['author']}《{state['context']['title']}》"
+                f"\n出自[{state['context']['origin']}]({state['context']['url']})"
             )
         return guess == golden, "".join(check)
 
+    @handle_exception
     def start_game(self, message: Message) -> None:
         game_state = game_manager.get_state(message.chat.id)
         if game_state:
@@ -295,7 +296,7 @@ class GuessPoem(GuessGame):
             return
         prepare = bot.reply_to(message, "正在准备游戏，请稍等...")
         poem = random.choice(self.poems)
-        line = random.choice(poem["lines"])
+        line = poem["sentence"]
         game_state = game_manager.start_game(
             message.chat.id,
             {
@@ -320,20 +321,20 @@ class GuessPoem(GuessGame):
         else:
             bot.delete_message(prepare.chat.id, prepare.message_id)
 
-    def make_image_prompt(self, word: str) -> str:
-        prompt = f"Describe this sentence from chinese poem in plain text, it should be fit as a Dall-E image generate prompt: {word}"
+    def make_image_prompt(self, sentence: str) -> str:
+        prompt = f"Describe this sentence from chinese poem in plain text, it should be fit as a Dall-E image generate prompt: {sentence}"
         response = self.openai_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             **self.config["chat"],
         )
         logger.debug(
-            "Image prompt for %s: %s", word, response.choices[0].message.content
+            "Image prompt for %s: %s", sentence, response.choices[0].message.content
         )
         return response.choices[0].message.content
 
-    def generate_image(self, word: str) -> str:
+    def generate_image(self, sentence: str) -> str:
         result = self.openai_client.images.generate(
-            prompt=self.make_image_prompt(word) + " in Chinese comic style",
+            prompt=self.make_image_prompt(sentence) + " in Chinese comic style",
             model=self.config["model"],
             n=1,
         )
@@ -387,7 +388,9 @@ def check_guess(message: Message):
     success, check = game_state["game"].check_answer(message.text, game_state)
 
     if success:
-        bot.reply_to(message, f"{check}\n太棒了，你是怎么知道的？")
+        bot.reply_to(
+            message, f"{check}\n太棒了，你是怎么知道的？", parse_mode="MarkdownV2"
+        )
         game_manager.record_win(message.from_user)
         game_manager.clear_state(message.chat.id)
     else:
@@ -396,11 +399,13 @@ def check_guess(message: Message):
             bot.reply_to(
                 message,
                 f"{check}\n猜错啦！还剩 {game_state['remain_guesses']} 次机会。",
+                parse_mode="MarkdownV2",
             )
         else:
             bot.reply_to(
                 message,
                 f"{check}\n没猜到吧，答案是 {game_state['answer']}。",
+                parse_mode="MarkdownV2",
             )
             game_manager.clear_state(message.chat.id)
 
