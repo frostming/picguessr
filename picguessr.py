@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import abc
 import copy
 import json
@@ -9,7 +11,7 @@ import sqlite3
 import sys
 import textwrap
 from collections import Counter
-from typing import Any, TypedDict
+from typing import Any, Iterable, TypedDict
 
 from openai import AzureOpenAI, OpenAI
 from telebot import TeleBot
@@ -57,7 +59,8 @@ class GameManager:
             conn.execute(
                 textwrap.dedent("""
                 CREATE TABLE IF NOT EXISTS scores (
-                    username TEXT PRIMARY KEY,
+                    userid INTEGER PRIMARY KEY,
+                    name TEXT,
                     score INTEGER DEFAULT 0
                 )
                 """)
@@ -78,15 +81,15 @@ class GameManager:
     def record_win(self, user: User) -> None:
         with sqlite3.connect(self._db) as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO scores (username, score) VALUES (?, COALESCE((SELECT score FROM scores WHERE username = ?), 0) + 1)",
-                (user.username, user.username),
+                "INSERT OR REPLACE INTO scores (userid, name, score) VALUES (?, ?, COALESCE((SELECT score FROM scores WHERE userid = ?), 0) + 1)",
+                (user.id, user.full_name, user.id),
             )
             conn.commit()
 
-    def get_scores(self) -> dict[str, int]:
+    def get_scores(self) -> Iterable[tuple[int, str, int]]:
         with sqlite3.connect(self._db) as conn:
-            cur = conn.execute("SELECT username, score FROM scores")
-            return dict(cur.fetchall())
+            cur = conn.execute("SELECT userid, name, score FROM scores")
+            return cur.fetchall()
 
 
 def evaluate_guess(guess: str, answer: str) -> str:
@@ -371,16 +374,13 @@ class GuessPoem(GuessGame):
 
 @handle_exception
 def show_score(message: Message):
-    board = game_manager.get_scores()
+    board = sorted(game_manager.get_scores(), key=lambda x: x[-1], reverse=True)
     if not board:
         bot.reply_to(message, "暂无记录")
         return
 
-    scores = "\n".join(
-        f"{username}: {score}"
-        for username, score in sorted(board.items(), key=lambda x: x[1], reverse=True)
-    )
-    bot.reply_to(message, f"当前排行榜：\n{scores}")
+    scores = "\n".join(f"{name}: {score}" for _, name, score in board)
+    bot.reply_to(message, f"当前排行榜：\n{scores}", parse_mode="MarkdownV2")
 
 
 @handle_exception
