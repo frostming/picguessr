@@ -177,7 +177,6 @@ class GuessIdiom(GuessGame):
             # TODO: per chat state
             bot.reply_to(message, "已经有一个游戏正在进行中")
             return
-        prepare = bot.reply_to(message, "正在准备游戏，请稍等...")
         idiom = random.choice(self.idioms)
         game_state = game_manager.start_game(
             message.chat.id,
@@ -190,6 +189,7 @@ class GuessIdiom(GuessGame):
                 "context": {},
             },
         )
+        prepare = bot.reply_to(message, "正在准备游戏，请稍等...")
         try:
             image_url = self.generate_image(idiom)
             bot.send_photo(
@@ -197,9 +197,14 @@ class GuessIdiom(GuessGame):
                 image_url,
                 caption=f"猜猜这是什么成语？你有 {game_state['remain_guesses']} 次机会。",
             )
-        except Exception:
+        except Exception as e:
             game_manager.clear_state(message.chat.id)
-            raise
+            if "content_policy_violation" in str(e):
+                bot.reply_to(
+                    message, "生成图片失败，可能是因为内容不符合政策，请重试。"
+                )
+            else:
+                raise
         else:
             bot.delete_message(prepare.chat.id, prepare.message_id)
 
