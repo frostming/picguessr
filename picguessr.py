@@ -259,7 +259,7 @@ class GuessIdiom(GuessGame):
 class GuessPoem(GuessGame):
     POEM_URL = "https://gist.githubusercontent.com/frostming/a7e46994c40a348808a9b3fc28297e2e/raw/gushiwen.json"
     POEM_FILE = os.path.join(DATA_DIR, "gushiwen.json")
-    PUNCTUATION = "，。！？,.!?"
+    PUNCTUATION = "，。！？,.!?；;"
 
     def __init__(self, openai_client: OpenAI) -> None:
         super().__init__(openai_client)
@@ -379,7 +379,9 @@ def show_score(message: Message):
         bot.reply_to(message, "暂无记录")
         return
 
-    scores = "\n".join(f"{name}: {score}" for _, name, score in board)
+    scores = "\n".join(
+        f"{name.replace('.', '\\.')}: {score}" for _, name, score in board
+    )
     bot.reply_to(message, f"当前排行榜：\n{scores}", parse_mode="MarkdownV2")
 
 
