@@ -7,3 +7,4 @@ cd "$(dirname $0)"
 set -x
 git pull
 docker compose up --build -d
+docker image prune -f
