@@ -380,7 +380,7 @@ def show_score(message: Message):
         return
 
     def escape_name(name: str) -> str:
-        return name.replace(".", "\\.")
+        return name.replace(".", "\\.").replace("(", "\\(").replace(")", "\\)")
 
     scores = "\n".join(f"{escape_name(name)}: {score}" for _, name, score in board)
     bot.reply_to(message, f"当前排行榜：\n{scores}", parse_mode="MarkdownV2")
