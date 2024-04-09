@@ -15,6 +15,7 @@ from typing import Any, Iterable, TypedDict
 
 from openai import AzureOpenAI, OpenAI
 from telebot import TeleBot
+from telebot.formatting import escape_markdown
 from telebot.types import BotCommand, Message, User
 
 logger = logging.getLogger(__name__)
@@ -379,10 +380,7 @@ def show_score(message: Message):
         bot.reply_to(message, "暂无记录")
         return
 
-    def escape_name(name: str) -> str:
-        return name.replace(".", "\\.").replace("(", "\\(").replace(")", "\\)")
-
-    scores = "\n".join(f"{escape_name(name)}: {score}" for _, name, score in board)
+    scores = "\n".join(f"{escape_markdown(name)}: {score}" for _, name, score in board)
     bot.reply_to(message, f"当前排行榜：\n{scores}", parse_mode="MarkdownV2")
 
 
