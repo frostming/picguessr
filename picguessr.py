@@ -379,9 +379,26 @@ def show_score(message: Message):
     if not board:
         bot.reply_to(message, "暂无记录")
         return
-
-    scores = "\n".join(f"{escape_markdown(name)}: {score}" for _, name, score in board)
-    bot.reply_to(message, f"当前排行榜：\n{scores}", parse_mode="MarkdownV2")
+    current_user = message.from_user.id
+    current_record = next(
+        (
+            (i, score)
+            for i, (uid, _, score) in enumerate(board, start=1)
+            if uid == current_user
+        ),
+        None,
+    )
+    if current_record:
+        your_status = f"\n\n你的得分：{current_record[1]}, 排名：{current_record[0]}"
+    else:
+        your_status = ""
+    scores = "\n".join(
+        f"{i:2d}\. {escape_markdown(name)}: {score}"
+        for i, (_, name, score) in enumerate(board[:20], start=1)
+    )
+    bot.reply_to(
+        message, f"当前排行榜：\n{scores}{your_status}", parse_mode="MarkdownV2"
+    )
 
 
 @handle_exception
