@@ -260,7 +260,7 @@ class GuessIdiom(GuessGame):
 class GuessPoem(GuessGame):
     POEM_URL = "https://gist.githubusercontent.com/frostming/a7e46994c40a348808a9b3fc28297e2e/raw/gushiwen.json"
     POEM_FILE = os.path.join(DATA_DIR, "gushiwen.json")
-    PUNCTUATION = "，。！？,.!?；;"
+    PUNCTUATION = "，。！？,.!?；;、"
 
     def __init__(self, openai_client: OpenAI) -> None:
         super().__init__(openai_client)
