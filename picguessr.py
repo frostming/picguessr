@@ -84,7 +84,7 @@ class GameManager:
     def record_win(self, user: User, chat_id: int) -> None:
         with sqlite3.connect(self._db) as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO scores (userid, chatid, name, score) VALUES (?, ?, COALESCE((SELECT score FROM scores WHERE userid = ?), 0) + 1)",
+                "INSERT OR REPLACE INTO scores (userid, chatid, name, score) VALUES (?, ?, ?, COALESCE((SELECT score FROM scores WHERE userid = ?), 0) + 1)",
                 (user.id, chat_id, user.full_name, user.id),
             )
             conn.commit()
