@@ -59,7 +59,7 @@ class GameManager:
         with sqlite3.connect(self._db) as conn:
             conn.execute(
                 textwrap.dedent("""
-                CREATE TABLE IF NOT EXISTS scores_new (
+                CREATE TABLE IF NOT EXISTS scores (
                     userid INTEGER NOT NULL,
                     chatid INTEGER NOT NULL,
                     name TEXT,
