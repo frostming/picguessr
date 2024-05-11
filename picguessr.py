@@ -59,10 +59,12 @@ class GameManager:
         with sqlite3.connect(self._db) as conn:
             conn.execute(
                 textwrap.dedent("""
-                CREATE TABLE IF NOT EXISTS scores (
-                    userid INTEGER PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS scores_new (
+                    userid INTEGER NOT NULL,
+                    chatid INTEGER NOT NULL,
                     name TEXT,
-                    score INTEGER DEFAULT 0
+                    score INTEGER DEFAULT 0,
+                    PRIMARY KEY (userid, chatid)
                 )
                 """)
             )
@@ -79,17 +81,19 @@ class GameManager:
     def clear_state(self, chat_id: int) -> None:
         self._states.pop(chat_id, None)
 
-    def record_win(self, user: User) -> None:
+    def record_win(self, user: User, chat_id: int) -> None:
         with sqlite3.connect(self._db) as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO scores (userid, name, score) VALUES (?, ?, COALESCE((SELECT score FROM scores WHERE userid = ?), 0) + 1)",
-                (user.id, user.full_name, user.id),
+                "INSERT OR REPLACE INTO scores (userid, chatid, name, score) VALUES (?, ?, COALESCE((SELECT score FROM scores WHERE userid = ?), 0) + 1)",
+                (user.id, chat_id, user.full_name, user.id),
             )
             conn.commit()
 
-    def get_scores(self) -> Iterable[tuple[int, str, int]]:
+    def get_scores(self, chat_id: int) -> Iterable[tuple[int, str, int]]:
         with sqlite3.connect(self._db) as conn:
-            cur = conn.execute("SELECT userid, name, score FROM scores")
+            cur = conn.execute(
+                "SELECT userid, name, score FROM scores WHERE chatid = ?", (chat_id,)
+            )
             return cur.fetchall()
 
 
@@ -375,7 +379,9 @@ class GuessPoem(GuessGame):
 
 @handle_exception
 def show_score(message: Message):
-    board = sorted(game_manager.get_scores(), key=lambda x: x[-1], reverse=True)
+    board = sorted(
+        game_manager.get_scores(message.chat.id), key=lambda x: x[-1], reverse=True
+    )
     if not board:
         bot.reply_to(message, "暂无记录")
         return
@@ -433,7 +439,7 @@ def check_guess(message: Message):
             f"{check}\n太棒了，你是怎么知道的？{answer}",
             parse_mode="MarkdownV2",
         )
-        game_manager.record_win(message.from_user)
+        game_manager.record_win(message.from_user, message.chat.id)
         game_manager.clear_state(message.chat.id)
     else:
         game_state["remain_guesses"] -= 1
