@@ -409,6 +409,11 @@ def show_score(message: Message):
 
 @handle_exception
 def check_guess(message: Message):
+    bot.reply_to(
+        message,
+        "猜成语与猜古诗游戏已下线，你仍可以查看分数，若要游玩可以自行部署，后会有期。",
+    )
+    return
     game_state = game_manager.get_state(message.chat.id)
     if not game_state:
         bot.reply_to(message, "没有游戏正在进行中, 请使用 /guess 或 /guess_p 开始游戏")
@@ -481,15 +486,16 @@ def main():
         and message.reply_to_message.from_user.id == me.id,
         chat_types=["supergroup"] if not is_debug else None,
     )
-    openai_client = AzureOpenAI(  # TODO: suppoprt vanilla OpenAI
+    _openai_client = AzureOpenAI(  # TODO: suppoprt vanilla OpenAI
         api_version="2024-02-01",
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
     )
     my_commands: list[BotCommand] = [BotCommand("score", "查看排行榜")]
-    for game in [GuessIdiom(openai_client), GuessPoem(openai_client)]:
-        game.add_to_bot(bot)
-        my_commands.extend(game.get_my_commands())
+    # Disable game for now
+    # for game in [GuessIdiom(openai_client), GuessPoem(openai_client)]:
+    #     game.add_to_bot(bot)
+    #     my_commands.extend(game.get_my_commands())
     bot.set_my_commands(my_commands)
 
     logger.info("Bot started.")
