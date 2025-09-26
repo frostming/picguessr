@@ -115,6 +115,9 @@ class Emperor(GuessGame):
             next_hint = state.state["next_hint"]
             if next_hint >= len(all_hints):
                 reply_message += "\n\n**正确答案：" + "/".join(answers) + "**"
+                reply_message += "\n\n" + "\n".join(
+                    f"{i}. {a['hint']}" for i, a in enumerate(all_hints, start=1)
+                )
                 game_manager.bot.reply_to(
                     message,
                     telegramify_markdown.markdownify(reply_message),
@@ -125,6 +128,10 @@ class Emperor(GuessGame):
                 game_manager.clear_state(message.chat.id)
             else:
                 reply_message += f"\n\n**提示 {next_hint + 1}/{total_hints}: {all_hints[next_hint]['hint']}**"
+                reply_message += "\n\n" + "\n".join(
+                    f"{i}. {a['hint']}"
+                    for i, a in enumerate(all_hints[:next_hint], start=1)
+                )
                 state.state["next_hint"] = next_hint + 1
                 reply = game_manager.bot.reply_to(
                     message,
