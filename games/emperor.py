@@ -80,7 +80,7 @@ class Emperor(GuessGame):
         try:
             game_manager.bot.delete_message(message.chat.id, message.message_id)
         except Exception:
-            pass
+            logger.exception("Failed to delete message")
         state.state["messages"] = [reply.message_id]
 
     def check_answer(self, message: Message, state: GameState) -> None:
@@ -120,6 +120,8 @@ class Emperor(GuessGame):
                     telegramify_markdown.markdownify(reply_message),
                     parse_mode="MarkdownV2",
                 )
+                # Preserve the last **correct** user message
+                state.state["messages"].pop()
                 game_manager.clear_state(message.chat.id)
             else:
                 reply_message += f"\n\n**提示 {next_hint + 1}/{total_hints}: {all_hints[next_hint]['hint']}**"
@@ -133,6 +135,6 @@ class Emperor(GuessGame):
                 try:
                     game_manager.bot.delete_message(message.chat.id, msg_id)
                 except Exception:
-                    pass
+                    logger.exception("Failed to delete message")
             if reply:
                 state.state["messages"] = [reply.message_id]
