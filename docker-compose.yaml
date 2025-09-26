@@ -4,7 +4,5 @@ services:
   bot:
     build: .
     volumes:
-      - ./data:/project/data
-    env_file:
-      - .env
+      - /data/picguessr:/project/data
     restart: always
