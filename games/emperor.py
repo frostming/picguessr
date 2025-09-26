@@ -95,7 +95,7 @@ class Emperor(GuessGame):
         if guess.strip() in answers:
             reply_message += "\n\n**回答正确！恭喜你！**"
             reply_message += "\n\n" + "\n".join(
-                f"{i}. {a}" for i, a in enumerate(all_hints, start=1)
+                f"{i}. {a['hint']}" for i, a in enumerate(all_hints, start=1)
             )
             game_manager.bot.reply_to(
                 message,
