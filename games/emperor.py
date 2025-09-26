@@ -65,6 +65,10 @@ class Emperor(GuessGame):
                 game_manager.bot.reply_to(message, err)
                 return
 
+        if not quiz["data"]["data"]["alternatives"]:
+            game_manager.bot.reply_to(message, "此题不支持，请换一题")
+            return
+
         state = game_manager.start_game(
             message.chat.id, self, {"quiz": quiz, "attempts": [], "next_hint": 1}
         )
