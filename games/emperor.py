@@ -2,6 +2,7 @@ import random
 from typing import Any
 
 import httpx
+import telegramify_markdown
 from telebot.types import BotCommand, Message
 
 from .base import GameState, GuessGame, logger
@@ -71,7 +72,9 @@ class Emperor(GuessGame):
         total_hints = len(quiz["data"]["data"]["data"])
         game_manager.bot.reply_to(
             message,
-            f"**{quiz['data']['name']}**\n\n{quiz['data']['desc']}\n\n提示 1/{total_hints}: {first_hint}",
+            telegramify_markdown.markdownify(
+                f"**{quiz['data']['name']}**\n\n{quiz['data']['desc']}\n\n提示 1/{total_hints}: {first_hint}"
+            ),
             parse_mode="MarkdownV2",
         )
 
@@ -94,7 +97,11 @@ class Emperor(GuessGame):
             reply_message += "\n\n" + "\n".join(
                 f"{i}. {a}" for i, a in enumerate(all_hints, start=1)
             )
-            game_manager.bot.reply_to(message, reply_message, parse_mode="MarkdownV2")
+            game_manager.bot.reply_to(
+                message,
+                telegramify_markdown.markdownify(reply_message),
+                parse_mode="MarkdownV2",
+            )
             game_manager.record_win(message.from_user, message.chat.id)
             game_manager.clear_state(message.chat.id)
         else:
@@ -102,12 +109,16 @@ class Emperor(GuessGame):
             if next_hint >= len(all_hints):
                 reply_message += "\n\n**正确答案：" + "/".join(answers) + "**"
                 game_manager.bot.reply_to(
-                    message, reply_message, parse_mode="MarkdownV2"
+                    message,
+                    telegramify_markdown.markdownify(reply_message),
+                    parse_mode="MarkdownV2",
                 )
                 game_manager.clear_state(message.chat.id)
             else:
                 reply_message += f"\n\n**提示 {next_hint + 1}/{total_hints}: {all_hints[next_hint]['hint']}**"
                 state.state["next_hint"] = next_hint + 1
                 game_manager.bot.reply_to(
-                    message, reply_message, parse_mode="MarkdownV2"
+                    message,
+                    telegramify_markdown.markdownify(reply_message),
+                    parse_mode="MarkdownV2",
                 )

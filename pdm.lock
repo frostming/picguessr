@@ -5,7 +5,7 @@
 groups = ["default"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:de0c31e7222afb54f5ee0823027b1be5a70eeba77c043b1e0f63acdf3ba5e09d"
+content_hash = "sha256:9ec7c32ef7d88ed11926cb9d3fdba34cc132d0019091ada666821f806c494601"
 
 [[metadata.targets]]
 requires_python = ">=3.10"
@@ -301,6 +301,17 @@ files = [
 ]
 
 [[package]]
+name = "mistletoe"
+version = "1.4.0"
+requires_python = "~=3.5"
+summary = "A fast, extensible Markdown parser in pure Python."
+groups = ["default"]
+files = [
+    {file = "mistletoe-1.4.0-py3-none-any.whl", hash = "sha256:44a477803861de1237ba22e375c6b617690a31d2902b47279d1f8f7ed498a794"},
+    {file = "mistletoe-1.4.0.tar.gz", hash = "sha256:1630f906e5e4bbe66fdeb4d29d277e2ea515d642bb18a9b49b136361a9818c9d"},
+]
+
+[[package]]
 name = "openai"
 version = "1.109.1"
 requires_python = ">=3.8"
@@ -478,6 +489,20 @@ groups = ["default"]
 files = [
     {file = "socksio-1.0.0-py3-none-any.whl", hash = "sha256:95dc1f15f9b34e8d7b16f06d74b8ccf48f609af32ab33c608d08761c5dcbb1f3"},
     {file = "socksio-1.0.0.tar.gz", hash = "sha256:f88beb3da5b5c38b9890469de67d0cb0f9d494b78b106ca1845f96c10b91c4ac"},
+]
+
+[[package]]
+name = "telegramify-markdown"
+version = "0.5.1"
+requires_python = ">=3.9"
+summary = "Makes it easy to send Markdown in Telegram MarkdownV2 style"
+groups = ["default"]
+dependencies = [
+    "mistletoe==1.4.0",
+]
+files = [
+    {file = "telegramify_markdown-0.5.1-py3-none-any.whl", hash = "sha256:a757b9a0f0d681ba7e29638deabc8decc634626bee359d95effaa505a86b756d"},
+    {file = "telegramify_markdown-0.5.1.tar.gz", hash = "sha256:a2c4ca337219607dce13883bdc30bf4faf07bf37e3f748594e8b10e1b5708fae"},
 ]
 
 [[package]]
