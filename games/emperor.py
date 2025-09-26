@@ -87,7 +87,8 @@ class Emperor(GuessGame):
             attempts.insert(0, f"❌ {guess.strip()}")
 
         reply_message = "\n".join(attempts)
-        total_hints = len(state.state["quiz"]["data"]["data"]["data"])
+        all_hints = state.state["quiz"]["data"]["data"]["data"]
+        total_hints = len(all_hints)
         if guess.strip() in answers:
             reply_message += "\n\n**回答正确！恭喜你！**"
             reply_message += "\n\n" + "\n".join(
@@ -97,7 +98,6 @@ class Emperor(GuessGame):
             game_manager.record_win(message.from_user, message.chat.id)
             game_manager.clear_state(message.chat.id)
         else:
-            all_hints = state.state["quiz"]["data"]["data"]["data"]
             next_hint = state.state["next_hint"]
             if next_hint >= len(all_hints):
                 reply_message += "\n\n**正确答案：" + "/".join(answers) + "**"
