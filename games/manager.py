@@ -1,7 +1,9 @@
 import os
 import sqlite3
 import textwrap
-from typing import Any, Iterable
+from contextlib import contextmanager
+from threading import Lock
+from typing import Any, Generator, Iterable
 
 from telebot import TeleBot
 from telebot.types import User
@@ -19,6 +21,7 @@ class GameManager:
         self._db = os.path.join(DATA_DIR, "game.db")
         self._init_db()
         self.bot = TeleBot(token=os.environ["BOT_TOKEN"])
+        self._locks: dict[int, Lock] = {}
 
     def set_debug(self, is_debug: bool) -> None:
         self.is_debug = is_debug
@@ -45,8 +48,11 @@ class GameManager:
         self._states[chat_id] = state = GameState(game, init_state)
         return state
 
-    def get_state(self, chat_id: int) -> GameState | None:
-        return self._states.get(chat_id)
+    @contextmanager
+    def get_state(self, chat_id: int) -> Generator[GameState | None, None, None]:
+        with self._locks.setdefault(chat_id, Lock()):
+            yield self._states.get(chat_id)
+            del self._locks[chat_id]
 
     def clear_state(self, chat_id: int) -> None:
         self._states.pop(chat_id, None)

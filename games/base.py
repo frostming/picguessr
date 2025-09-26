@@ -62,18 +62,18 @@ class GuessGame(abc.ABC):
     def start_game_handler(self, message: Message) -> None:
         from .manager import game_manager
 
-        state = game_manager.get_state(message.chat.id)
-        if state:
-            game_manager.bot.reply_to(message, "当前已有正在进行的游戏。")
-            return
-        prepare = game_manager.bot.reply_to(message, "正在准备游戏，请稍候...")
-        try:
-            self.start_game(message)
-        except Exception:
-            game_manager.clear_state(message.chat.id)
-            raise
-        else:
-            game_manager.bot.delete_message(prepare.chat.id, prepare.message_id)
+        with game_manager.get_state(message.chat.id) as state:
+            if state:
+                game_manager.bot.reply_to(message, "当前已有正在进行的游戏。")
+                return
+            prepare = game_manager.bot.reply_to(message, "正在准备游戏，请稍候...")
+            try:
+                self.start_game(message)
+            except Exception:
+                game_manager.clear_state(message.chat.id)
+                raise
+            else:
+                game_manager.bot.delete_message(prepare.chat.id, prepare.message_id)
 
 
 class GameState(Generic[G]):

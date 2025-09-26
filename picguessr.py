@@ -47,13 +47,14 @@ def show_score(message: Message):
 
 @handle_exception
 def check_guess(message: Message):
-    state = game_manager.get_state(message.chat.id)
-    if not state:
-        bot.reply_to(
-            message, "当前没有正在进行的游戏，发送 /<game_command> 开始一个新游戏吧！"
-        )
-        return
-    state.game.check_answer(message, state)
+    with game_manager.get_state(message.chat.id) as state:
+        if not state:
+            bot.reply_to(
+                message,
+                "当前没有正在进行的游戏，发送 /<game_command> 开始一个新游戏吧！",
+            )
+            return
+        state.game.check_answer(message, state)
 
 
 def setup_logger(is_debug: bool):
