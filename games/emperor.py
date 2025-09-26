@@ -65,18 +65,23 @@ class Emperor(GuessGame):
                 game_manager.bot.reply_to(message, err)
                 return
 
-        game_manager.start_game(
+        state = game_manager.start_game(
             message.chat.id, self, {"quiz": quiz, "attempts": [], "next_hint": 1}
         )
         first_hint = quiz["data"]["data"]["data"][0]["hint"]
         total_hints = len(quiz["data"]["data"]["data"])
-        game_manager.bot.reply_to(
+        reply = game_manager.bot.reply_to(
             message,
             telegramify_markdown.markdownify(
                 f"**{quiz['data']['name']}**\n\n{quiz['data']['desc']}\n\n提示 1/{total_hints}: {first_hint}"
             ),
             parse_mode="MarkdownV2",
         )
+        try:
+            game_manager.bot.delete_message(message.chat.id, message.message_id)
+        except Exception:
+            pass
+        state.state["messages"] = [reply.message_id]
 
     def check_answer(self, message: Message, state: GameState) -> None:
         answers = [
@@ -92,6 +97,8 @@ class Emperor(GuessGame):
         reply_message = "\n".join(attempts)
         all_hints = state.state["quiz"]["data"]["data"]["data"]
         total_hints = len(all_hints)
+        state.state["messages"].append(message.message_id)
+        reply = None
         if guess.strip() in answers:
             reply_message += "\n\n**回答正确！恭喜你！**"
             reply_message += "\n\n" + "\n".join(
@@ -117,8 +124,15 @@ class Emperor(GuessGame):
             else:
                 reply_message += f"\n\n**提示 {next_hint + 1}/{total_hints}: {all_hints[next_hint]['hint']}**"
                 state.state["next_hint"] = next_hint + 1
-                game_manager.bot.reply_to(
+                reply = game_manager.bot.reply_to(
                     message,
                     telegramify_markdown.markdownify(reply_message),
                     parse_mode="MarkdownV2",
                 )
+            for msg_id in state.state["messages"]:
+                try:
+                    game_manager.bot.delete_message(message.chat.id, msg_id)
+                except Exception:
+                    pass
+            if reply:
+                state.state["messages"] = [reply.message_id]
